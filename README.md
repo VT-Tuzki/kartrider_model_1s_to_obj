@@ -1,0 +1,1 @@
+# kartrider_model_1s_to_obj
