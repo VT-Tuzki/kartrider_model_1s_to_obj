@@ -88,19 +88,8 @@ class Model1SToOBJ:
 
     def _write_faces(self, obj_file, module_info):
         """写入面片"""
-        # obj_file.write("mtllib textures.mtl\n")  # 引用材质库
-        # current_material = -1
-        # for a, b, c, material_id in module_info.get('faces', []):
-        #     if material_id != current_material:
-        #         obj_file.write(f"usemtl material_{material_id}\n")
-        #         current_material = material_id
-        #     obj_file.write(f"f {a+1}/{a+1}/{a+1} {b+1}/{b+1}/{b+1} {c+1}/{c+1}/{c+1}\n")
         for a, b, c, d, e, f, g, h, i, j, material_id in module_info.get('faces', []):
-            # if e != 0xFFFF:
-            #     obj_file.write(f"f {a+1} {b+1} {c+1} {d+1}\n")
-            # else :
-                obj_file.write(f"f {g+1} {h+1} {i+1}\n")
-                # obj_file.write(f"f {g+1}/{g+1}/{g+1} {h+1}/{h+1}/{h+1} {i+1}/{i+1}/{i+1}\n")
+                obj_file.write(f"f {g+1}/{a+1}/ {h+1}/{b+1}/ {i+1}/{c+1}/\n")
 
 
 
@@ -116,7 +105,7 @@ class Model1SToOBJ:
             obj_file.write("\n# Vertex data will be added here\n")
             obj_file.write("\nmtllib test.mtl\n")
             self._write_vertex(obj_file, module_info)
-            #self._write_uv(obj_file, module_info)
+            self._write_uv(obj_file, module_info)
             self._write_normal(obj_file, module_info)
             obj_file.write("\nusemtl my_textured_material\n")
             self._write_faces(obj_file, module_info)
@@ -214,7 +203,7 @@ class Model1SToOBJ:
                 vertex_indices = []
                 for _ in range(uv_count):
                     # 解析3个float（UV + 权重或其他）
-                    nx = struct.unpack_from('<H', data, index)[0]
+                    nx = struct.unpack_from('<f', data, index)[0]
                     index +=4
                     ny = struct.unpack_from('<f', data, index)[0]
                     index +=4
@@ -231,9 +220,21 @@ class Model1SToOBJ:
                 logging.info(f"第二段数据数值: {second_data_type_num:X}")
                 index += 4
                 logging.info(f"当前index 位置: @{index:X}")
-                index += second_data_type_num * 12
-                logging.info(f"跳过第二段数据 位置: @{index:X}")
-
+                uv = []
+                for num in range(second_data_type_num):
+                    vertex_id  = int.from_bytes(data[index:index+2], 'little')
+                    index +=2
+                    tex_block  = int.from_bytes(data[index:index+2], 'little')
+                    index +=2
+                    u = struct.unpack_from('<f', data, index)[0]
+                    index +=4
+                    v = struct.unpack_from('<f', data, index)[0]
+                    index +=4
+                    v = 1.0 - v
+                    uv.append((u,v))
+                logging.info(f"当前index 位置: @{index:X}")
+                self.current_module_info['uvs'] = uv
+                self.current_module_info['uvs_num'] = second_data_type_num
                 face_count = int.from_bytes(data[index:index+2], 'little')
                 index +=4
                 logging.info(f"当前face_count: @{face_count:X}")
