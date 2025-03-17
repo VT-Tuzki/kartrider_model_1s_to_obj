@@ -3,12 +3,26 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
+from dataclasses import dataclass
+
+@dataclass
+class model:
+    name:str
+    matrix:list
+    id:int
+    vertex_num:int
+    vertex:list
+    normals_num:int
+    normals:list
+    weights:list
+    faces_num:int
+    faces:list
 
 class Model1SToOBJ:
     # 文件头标识
-    MODEL_HEADER = b'\xaa\x47\x46\x04\x2a\x19'
-    FILE_HEADER = b'\xaa\x47\x49\x02\x8c\x07'
-    BASE_MODEL_HEADER = b'\xaa\x47\x3c\x03\x07\x0e'
+    MODEL_HEADER =          b'\xaa\x47\x46\x04\x2a\x19'
+    FILE_HEADER =           b'\xaa\x47\x49\x02\x8c\x07'
+    BASE_MODEL_HEADER =     b'\xaa\x47\x3c\x03\x07\x0e'
     VERTEX_COORDINATES_HEADER = b'\xaa\x27'
     def __init__(self):
         self.output_dir = ""
@@ -52,7 +66,7 @@ class Model1SToOBJ:
     def _write_vertex(self, obj_file, module_info):
         """写入vertex信息"""
 
-        for i in range(module_info['vertex_num'] - 1):
+        for i in range(module_info['vertex_num']):
             x, y, z = module_info['vertex'][i]
             matrix = module_info['matrix']
             # 矩阵乘法（行主序，假设平移在m[3], m[7], m[11]）
@@ -62,11 +76,10 @@ class Model1SToOBJ:
             # obj_file.write(f"v {new_x:.6f} {new_y:.6f} {new_z:.6f}\n")
             obj_file.write(f"v {x:.6f} {y:.6f} {z:.6f}\n")
 
-
     def _write_uv(self, obj_file, module_info):
         """写入UV坐标"""
-        for u, v in module_info.get('uvs', []):
-            obj_file.write(f"vt {u:.6f} {v:.6f}\n")
+        for uv in module_info['uvs']:
+            obj_file.write(f"vt {uv[0]:.6f} {uv[1]:.6f}\n")
 
     def _write_normal(self, obj_file, module_info):
         """写入法线"""
@@ -75,13 +88,20 @@ class Model1SToOBJ:
 
     def _write_faces(self, obj_file, module_info):
         """写入面片"""
-        obj_file.write("mtllib textures.mtl\n")  # 引用材质库
-        current_material = -1
-        for a, b, c, material_id in module_info.get('faces', []):
-            if material_id != current_material:
-                obj_file.write(f"usemtl material_{material_id}\n")
-                current_material = material_id
-            obj_file.write(f"f {a+1}/{a+1}/{a+1} {b+1}/{b+1}/{b+1} {c+1}/{c+1}/{c+1}\n")
+        # obj_file.write("mtllib textures.mtl\n")  # 引用材质库
+        # current_material = -1
+        # for a, b, c, material_id in module_info.get('faces', []):
+        #     if material_id != current_material:
+        #         obj_file.write(f"usemtl material_{material_id}\n")
+        #         current_material = material_id
+        #     obj_file.write(f"f {a+1}/{a+1}/{a+1} {b+1}/{b+1}/{b+1} {c+1}/{c+1}/{c+1}\n")
+        for a, b, c, d, e, f, g, h, i, j, material_id in module_info.get('faces', []):
+            # if e != 0xFFFF:
+            #     obj_file.write(f"f {a+1} {b+1} {c+1} {d+1}\n")
+            # else :
+                obj_file.write(f"f {g+1} {h+1} {i+1}\n")
+                # obj_file.write(f"f {g+1}/{g+1}/{g+1} {h+1}/{h+1}/{h+1} {i+1}/{i+1}/{i+1}\n")
+
 
 
     def _create_obj_file(self, module_info):
@@ -94,10 +114,12 @@ class Model1SToOBJ:
         with open(filepath, 'w', encoding='utf-8') as obj_file:
             self._write_obj_header(obj_file, module_info)
             obj_file.write("\n# Vertex data will be added here\n")
+            obj_file.write("\nmtllib test.mtl\n")
             self._write_vertex(obj_file, module_info)
-            # self._write_uv(obj_file, module_info)
-            # self._write_normal(obj_file, module_info)
-            # self._write_faces(obj_file, module_info)
+            #self._write_uv(obj_file, module_info)
+            self._write_normal(obj_file, module_info)
+            obj_file.write("\nusemtl my_textured_material\n")
+            self._write_faces(obj_file, module_info)
 
         logging.info(f"Created OBJ file: {filepath}")
         return filepath
@@ -114,6 +136,7 @@ class Model1SToOBJ:
 
         # 解析模块基本信息
         module_id = int.from_bytes(data[index:index+2], 'little')
+        logging.info(f"当前模块id: {module_id}")
         index += 2
 
         name_len = int.from_bytes(data[index:index+2], 'little')
@@ -159,11 +182,11 @@ class Model1SToOBJ:
                 if data_type_num % 2 == 0:
                     # 偶数：每组12字节（3个float）
                     data_type = 'even'
-                    logging.info(f"偶数")
+                    logging.info(f"偶数: 骨骼ID:{data_type_num}")
                 else:
                     # 奇数：每组16字节（4个float）
                     data_type = 'odd'
-                    logging.info(f"奇数")
+                    logging.info(f"奇数: 骨骼ID:{data_type_num}")
                 index += 2
                 logging.info(f"当前index 位置: @{index:X}")
                 vertex_num = int.from_bytes(data[index:index+2], 'little')
@@ -187,68 +210,60 @@ class Model1SToOBJ:
                 index +=4
                 logging.info(f"当前index 位置: @{index:X}")
                 logging.info(f"uv_count: @{uv_count:X},3:{uv_count*9 + index:X}, 4:{uv_count*12 + index:X}")
-                attribute_data = []
+                normals = []
+                vertex_indices = []
                 for _ in range(uv_count):
-                    if data_type == 'even':
-                        # 解析3个float（UV + 权重或其他）
-                        u = struct.unpack_from('<f', data, index)[0]
-                        index +=4
-                        v = struct.unpack_from('<f', data, index)[0]
-                        index +=4
-                        w = struct.unpack_from('<f', data, index)[0]
-                        index +=4
-                        attribute_data.append((u, v, w))
-                    else:
-                        # 解析4个float（UV + 法线）
-                        u = struct.unpack_from('<f', data, index)[0]
-                        index +=4
-                        v = struct.unpack_from('<f', data, index)[0]
-                        index +=4
-                        nx = struct.unpack_from('<f', data, index)[0]
-                        index +=4
-                        ny = struct.unpack_from('<f', data, index)[0]
-                        index +=4
-                        attribute_data.append((u, v, nx, ny))
+                    # 解析3个float（UV + 权重或其他）
+                    nx = struct.unpack_from('<H', data, index)[0]
+                    index +=4
+                    ny = struct.unpack_from('<f', data, index)[0]
+                    index +=4
+                    nz = struct.unpack_from('<f', data, index)[0]
+                    index +=4
+                    normals.append((nx, ny, nz))
                 logging.info(f"当前index 位置: @{index:X}")
                 # 存储到模块信息
-                if data_type == 'even':
-                    self.current_module_info['uvs'] = [(u, v) for u, v, _ in attribute_data]
-                    self.current_module_info['weights'] = [w for _, _, w in attribute_data]
-                else:
-                    self.current_module_info['uvs'] = [(u, v) for u, v, _, _ in attribute_data]
-                    self.current_module_info['normals'] = [(nx, ny) for _, _, nx, ny in attribute_data]
+                self.current_module_info['normals'] = normals
                 logging.info(f"当前index 位置: @{index:X}")
-                # normal_count = int.from_bytes(data[index:index+4], 'little')
-                # logging.info(f"normal_count: {normal_count}")
-                # index +=4
-                # normals = []
-                # for _ in range(normal_count):
-                #     # 假设每条目为2个16位有符号整数（-32768~32767），映射到[-1,1]
-                #     nx_int = struct.unpack_from('<h', data, index)[0]
-                #     ny_int = struct.unpack_from('<h', data, index+2)[0]
-                #     nx = nx_int / 32767.0
-                #     ny = ny_int / 32767.0
-                #     normals.append((nx, ny, 0.0))  # Z分量需推测或从其他数据补全
-                #     index +=4
-                # self.current_module_info['normals'] = normals
-                # logging.info(f"当前index 位置: @{index:X}")
 
-                # face_count = int.from_bytes(data[index:index+4], 'little')
-                # index +=4
-                # faces = []
-                # for _ in range(face_count):
-                #     a = int.from_bytes(data[index:index+2], 'little')
-                #     index +=2
-                #     b = int.from_bytes(data[index:index+2], 'little')
-                #     index +=2
-                #     c = int.from_bytes(data[index:index+2], 'little')
-                #     index +=2
-                #     material_id = data[index]
-                #     index +=1
-                #     # 跳过19字节未知字段
-                #     index +=19
-                #     faces.append((a, b, c, material_id))
-                # self.current_module_info['faces'] = faces
+                second_data_type_num = int.from_bytes(data[index:index+2], 'little')
+                # 根据data_type_num奇偶性判断数据类型
+                logging.info(f"第二段数据数值: {second_data_type_num:X}")
+                index += 4
+                logging.info(f"当前index 位置: @{index:X}")
+                index += second_data_type_num * 12
+                logging.info(f"跳过第二段数据 位置: @{index:X}")
+
+                face_count = int.from_bytes(data[index:index+2], 'little')
+                index +=4
+                logging.info(f"当前face_count: @{face_count:X}")
+                logging.info(f"当前index 位置: @{index:X}")
+                faces = []
+                for num in range(face_count):
+                    a = int.from_bytes(data[index:index+2], 'little')
+                    index +=2
+                    b = int.from_bytes(data[index:index+2], 'little')
+                    index +=2
+                    c = int.from_bytes(data[index:index+2], 'little')
+                    index +=2
+                    d = int.from_bytes(data[index:index+2], 'little')
+                    index +=2
+                    e = int.from_bytes(data[index:index+2], 'little')
+                    index +=2
+                    f = int.from_bytes(data[index:index+2], 'little')
+                    index +=2
+                    g = int.from_bytes(data[index:index+2], 'little')
+                    index +=2
+                    h = int.from_bytes(data[index:index+2], 'little')
+                    index +=2
+                    i = int.from_bytes(data[index:index+2], 'little')
+                    index +=2
+                    j = int.from_bytes(data[index:index+2], 'little')
+                    index +=2
+                    material_id = num
+                    faces.append((a, b, c, d, e, f, g, h, i, j, material_id))
+                self.current_module_info['faces'] = faces
+                self.current_module_info['faces_num'] = face_count
                 logging.info(f"当前index 位置: @{index:X}")
             # 生成OBJ文件
             self._create_obj_file(self.current_module_info)

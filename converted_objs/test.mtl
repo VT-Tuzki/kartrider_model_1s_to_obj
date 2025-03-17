@@ -1,0 +1,4 @@
+# 定义材质
+newmtl my_textured_material
+# 引用纹理文件
+map_Kd 1.png
