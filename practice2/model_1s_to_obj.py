@@ -80,27 +80,29 @@ class Model1SToOBJ:
         obj_file.write("# Transformation Matrix:\n")
 
     def _write_vertex(self, obj_file, module_info):
-        matrix = module_info.get('base_matrix_end')
+        """应用镜像对称变换"""
+        module_name = module_info['name']
+        # 判断是否为右部件（如wheel1/wheel3）
+        is_right = '1' in module_name or '3' in module_name or 'right' in module_name.lower()
+
+        # # 选择参数
+        # if is_right:
+        #     tx, ty, tz = module_info['right_params']
+        # else:
+        #     tx, ty, tz = module_info['left_params']
+
+        # 应用平移（假设基础矩阵为单位矩阵）
+        # if(module_info['name'] == "seat"):
+        #     for i in range(module_info['vertex_num']):
+        #         x, y, z = module_info['vertex'][i]
+        #         obj_file.write(f"v {x:.6f} {y:.6f} {z:.6f}\n")
+        # else:
+        #     for i in range(module_info['vertex_num']):
+        #         x, y, z = module_info['vertex'][i]
+        #         obj_file.write(f"v {x+ty:.6f} {y+tz:.6f} {z:.6f}\n")
         for i in range(module_info['vertex_num']):
             x, y, z = module_info['vertex'][i]
-            if((module_info['name'] == 'seat') | (matrix == None)):
-                obj_file.write(f"v {x:.6f} {y:.6f} {z:.6f}\n")
-            else:
-                # 矩阵乘法（行主序，假设平移在m[3], m[7], m[11]）
-                rotation_matrix = [
-                    [matrix[0], matrix[1], matrix[2]],   # 第一行
-                    [matrix[3], matrix[4], matrix[5]],   # 第二行
-                    [matrix[6], matrix[7], matrix[8]]    # 第三行
-                ]
-                x_rot = x * rotation_matrix[0][0] + y * rotation_matrix[0][1] + z * rotation_matrix[0][2]
-                y_rot = x * rotation_matrix[1][0] + y * rotation_matrix[1][1] + z * rotation_matrix[1][2]
-                z_rot = x * rotation_matrix[2][0] + y * rotation_matrix[2][1] + z * rotation_matrix[2][2]
-
-                new_x = x_rot + matrix[9]
-                new_y = y_rot + matrix[10]
-                new_z = z_rot + matrix[11]
-                # obj_file.write(f"v {new_x:.6f} {new_y:.6f} {new_z:.6f}\n")
-                obj_file.write(f"v {new_x:.6f} {new_y:.6f} {new_z:.6f}\n")
+            obj_file.write(f"v {x:.6f} {y:.6f} {z:.6f}\n")
 
     def _write_uv(self, obj_file, module_info):
         """写入UV坐标"""
@@ -141,11 +143,13 @@ class Model1SToOBJ:
         """解析15+6的镜像对称参数结构"""
         floats = struct.unpack('<21f', matrix_data)
 
-        base_matrix = floats[:16]  # 4x4矩阵（通常为单位矩阵）
-        params_group1 = floats[16:19]  # 参数组1
-        params_group2 = floats[19:22]  # 参数组2
+        # 分解字段
+        base_matrix = floats[:16]          # 4x4矩阵（可能为占位）
+        left_params = floats[16:19]        # 左部件参数（tx, ty, tz）
+        right_params = floats[19:22]       # 右部件参数（tx, ty, tz）
+        reserved = floats[22:]             # 保留字段（可能为对齐填充）
 
-        return (base_matrix, params_group1, params_group2)
+        return (base_matrix, left_params, right_params)
 
     def process_module(self, data, index, is_base_module=False):
         """处理单个模块"""
@@ -186,10 +190,10 @@ class Model1SToOBJ:
 
             # 解析变换矩阵
             matrix_data = data[index:index+84]
-            base_matrix, params_group1, params_group2 = self.parse_transform_matrix(matrix_data)
+            base_matrix, left_params, right_params = self.parse_transform_matrix(matrix_data)
             self.current_module_info['base_matrix'] = base_matrix
-            self.current_module_info['params_group1'] = params_group1
-            self.current_module_info['params_group2'] = params_group2
+            self.current_module_info['left_params'] = left_params
+            self.current_module_info['right_params'] = right_params
             index += 84
             index += 50
             if(data[index:index+2] != self.VERTEX_COORDINATES_HEADER):
@@ -278,22 +282,12 @@ class Model1SToOBJ:
                 self.current_module_info['faces'] = faces
                 self.current_module_info['faces_num'] = face_count
                 logging.info(f"当前index 位置: @{index:X}")
-
-            test_index = index + 2
-            logging.info(f"结束后内容  {data[test_index:test_index+1]}\n")
-            if(b'\x80' == data[test_index:test_index+1]):
-                # 解析变换矩阵
-                matrix_data = data[index:index+84]
-                base_matrix_end, params_group_end1, params_group_end2 = self.parse_transform_matrix(matrix_data)
-                self.current_module_info['base_matrix_end'] = base_matrix_end
-                self.current_module_info['params_group_end1'] = params_group_end1
-                self.current_module_info['params_group_end2'] = params_group_end2
-                logging.info(f"第一个矩阵 {(base_matrix, params_group1, params_group2)}\n")
-                logging.info(f"第二个矩阵  {(base_matrix_end, params_group_end1, params_group_end2)}\n")
-
             # 生成OBJ文件
             self._create_obj_file(self.current_module_info)
 
+            # 调试信息
+            logging.debug(f"Processed module at 0x{start_offset:X}")
+            logging.debug(f"Final index position: 0x{index:X}")
 
         return index
 
