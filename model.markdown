@@ -1,106 +1,104 @@
-# model.1s 文件解析规范（更新版）
+# model.1s 文件解析规范（v1.3更新版）
 
 ## 总文件头
 | 数据内容 | 长度 | 详细说明 | 对应代码逻辑 |
 |---------|------|---------|-------------|
-| 固定标识 | 6B   | `0xAA4749028C0700` 模型文件标识 | `FILE_HEADER = b'\xaa\x47\x49\x02\x8c\x07'` |
-| 未知数据 | 2B   | 保留字段（全零填充） | 未解析，直接跳过 |
-| 模块个数 | 2B   | 小端格式，表示总模块数量 | `total_modules = int.from_bytes(data[index:index+4], 'little')` |
-| 未知数据 | 4B   | 保留字段（全零填充） | 未解析，直接跳过 |
+| 固定标识 | 6B   | `0xAA4749028C07` 文件头标识 | `FILE_HEADER = b'\xaa\x47\x49\x02\x8c\x07'` |
+| 模块个数 | 4B   | 小端格式，总模块数量 | `total_modules = int.from_bytes(data[index:index+4], 'little')` |
+| 保留字段 | 8B   | 全零填充（跳过） | `index += 8` |
 
 ---
 
-## 模块头结构
-### 基础模块头
+## 模块结构
+### 模块头标识
 | 数据内容 | 长度 | 详细说明 | 对应代码逻辑 |
 |---------|------|---------|-------------|
 | 固定标识 | 6B   | `0xAA4746042A19` 模块标识 | `MODEL_HEADER = b'\xaa\x47\x46\x04\x2a\x19'` |
-| 模块ID | 2B   | 小端格式，模块唯一标识 | `module_id = int.from_bytes(data[index:index+2], 'little')` |
-| 名称长度 | 2B   | 模块名UTF-16字符数 | `name_len = int.from_bytes(data[index:index+2], 'little')` |
-| 模块名称 | N*2B | UTF-16编码的模块名 | `module_name = data[index:index+name_len*2].decode('utf-16le')` |
-| 变换矩阵 | 64B  | 4x4矩阵（16个float小端） | `matrix = [struct.unpack_from('<f', data, i*4)[0] for i in range(16)]` |
-| 顶点坐标头 | 2B   | `0xAA27` 标识 | `VERTEX_COORDINATES_HEADER = b'\xaa\x27'` |
+| 模块ID | 2B   | 小端格式唯一标识 | `module_id = int.from_bytes(data[index:index+2], 'little')` |
+| 名称长度 | 2B   | UTF-16字符数 | `name_len = int.from_bytes(data[index:index+2], 'little')` |
+| 模块名称 | (N+1)*2B | UTF-16LE编码，带2B终止符 | `module_name = data[index:index+2+name_len*2].decode('utf-16le')` |
 
 ---
 
-### 顶点数据段
+### 变换矩阵结构（新增）
 | 数据内容 | 长度 | 详细说明 | 对应代码逻辑 |
 |---------|------|---------|-------------|
-| 顶点数量 | 2B   | 小端格式，顶点总数 | `vertex_num = int.from_bytes(data[index:index+2], 'little')` |
-| 顶点坐标 | N*12B | 每组12B：`<3f`（x,y,z） | `x, y, z = struct.unpack_from('<3f', data, index)` |
+| 矩阵数据 | 84B  | 21个float小端格式 | `base_matrix, p1, p2 = struct.unpack('<21f', matrix_data)` |
+| **组成** |       | - 前16个float：4x4基础矩阵<br>- 后续参数组：对称参数 | `self.current_module_info['base_matrix']`<br>`self.current_module_info['params_group1']` |
 
 ---
 
-### UV数据段（第二段数据）
-| 数据内容 | 长度 | 详细说明 | 对应代码逻辑 |
-|---------|------|---------|-------------|
-| UV记录数 | 2B   | 小端格式 | `second_data_type_num = int.from_bytes(data[index:index+2], 'little')` |
-| UV记录 | N*12B | 每组12B：<br>`vertex_id(2B)`<br>`tex_block(2B)`<br>`u(4B float)`<br>`v(4B float)` | 解析逻辑：<br>```python<br>vertex_id = int.from_bytes(data[i:i+2], 'little')<br>tex_block = int.from_bytes(data[i+2:i+4], 'little')<br>u = struct.unpack('<f', data[i+4:i+8])[0]<br>v = struct.unpack('<f', data[i+8:i+12])[0]<br>v = 1.0 - v  # 垂直翻转<br>``` |
+### 顶点数据段（增强说明）
+| 新增字段 | 处理逻辑 |
+|---------|----------|
+| 骨骼ID | `bone_id = int.from_bytes(data[index:index+2], 'little')`<br>关联顶点权重数据 |
+| 双矩阵变换 | 动态模块应用两级矩阵变换：<br>```python<br>new_x = (x * rm1[0][0] + ...) + tm1[9]<br>new_x = (new_x1 * rm2[0][0] + ...) + tm2[9]``` |
 
 ---
 
-### 面数据段（第三段数据）
-| 数据内容 | 长度 | 详细说明 | 对应代码逻辑 |
-|---------|------|---------|-------------|
-| 面数量 | 2B   | 小端格式 | `face_count = int.from_bytes(data[index:index+2], 'little')` |
-| 面记录 | N*20B | 每组20B：<br>`a(2B)`<br>`b(2B)`<br>`c(2B)`<br>`d(2B)`<br>`e(2B)`<br>`f(2B)`<br>`g(2B)`<br>`h(2B)`<br>`i(2B)`<br>`j(2B)` | 关键字段：<br>- `g,h,i`：面顶点索引<br>导出逻辑：<br>```python<br>obj_file.write(f"f {g+1}/{a+1}/ {h+1}/{b+1}/ {i+1}/{c+1}/\n")<br>``` |
+### UV数据段修正
+| 变更点 | 说明 |
+|-------|------|
+| 解析长度 | UV记录数从4B小端读取：<br>`uv_count = int.from_bytes(data[index:index+4], 'little')` |
+| 索引偏移 | 面数据UV索引直接使用`a,b,c`字段：<br>`f {g+1}/{a+1}/...` |
 
 ---
 
-## 关键处理流程
-### 1. UV坐标修正规则
+### 面数据段规范
+| 新增特性 | 代码实现 |
+|---------|----------|
+| 面记录长度 | 每组20B（10个2B索引）<br>`a,b,c,d,e,f,g,h,i,j = struct.unpack('<10H', data)` |
+| 材质绑定 | `material_id`动态生成：<br>`faces.append(..., material_id=num)` |
+
+---
+
+## 新增关键处理逻辑
+### 1. 双矩阵顶点变换
 ```python
-# 垂直翻转适配Blender坐标系
-v = 1.0 - v
-
-# 区块处理（示例）
-if tex_block == 1:  # 接触面区块
-    u = 1.0 - u     # 水平镜像
-    u = u * 0.5 + 0.5  # 映射到右半部
-else:               # 侧面区块
-    u = u * 0.5     # 映射到左半部
+# 动态模型（如车轮）应用两级矩阵
+if module_name != 'seat' and base_matrix_end存在:
+    # 第一级矩阵旋转平移
+    x_rot1 = x*rm1[0][0] + y*rm1[0][1] + z*rm1[0][2]
+    new_x1 = x_rot1 + tm1[9]
+    # 第二级矩阵旋转平移
+    new_x = new_x1*rm2[0][0] + ... + tm2[9]
 ```
 
-### 2. 面数据导出规则
+### 2. 子模块递归解析
+```python
+# 检测子模块标记
+has_submodule = int.from_bytes(data[index:index+2], 'little')
+if has_submodule:
+    self.process_module(data, index+2, is_base_module=True)
+```
+
+---
+
+## 数据验证更新
+### 面数据示例
+代码输出格式：
 ```obj
-# OBJ面格式（顶点索引/UV索引）
-f 32/23/ 45/34/ 78/56/
+f 33/1/ 46/2/ 79/3/
 ```
+对应原始数据：
+- `g=32, h=45, i=78`（索引+1）
+- `a=0, b=1, c=2`（UV索引+1）
 
 ---
 
-## 材质文件规范（.mtl）
-```mtl
-newmtl wheel_material
-map_Kd 0.png       # 基础颜色贴图
-map_Bump 1.png     # 法线贴图（必须设为Non-Color）
-bump -bm 1.0       # Blender法线强度参数
-```
+## 文档同步声明
+> 本规范与`model_1s_to_obj.py` v1.3完全同步，新增双矩阵变换、子模块递归解析、动态材质绑定等特性。关键更新包括：
+> 1. 文件头长度修正（模块个数4B→原文档错误描述为2B）
+> 2. 新增双矩阵变换计算规范
+> 3. UV段长度解析从2B→4B
+> 4. 新增骨骼ID字段及面数据材质绑定逻辑
+> 5. 补充子模块递归处理流程
 
 ---
 
-## 模块类型区分
-| 模块特征 | 静态模型（偶数） | 动态模型（奇数） |
-|---------|------------------|------------------|
-| 数据段结构 | 无动画数据 | 包含骨骼权重字段 |
-| 典型组件 | 车身、座椅 | 车轮、方向盘 |
-| 顶点处理 | 直接导出 | 需应用变换矩阵 |
-
----
-
-## 数据验证示例
-### UV数据解析示例
-原始HEX：`00 00 00 00 C2 F6 26 3F B8 C5 F0 3E`
-解析结果：
-- vertex_id = 0
-- tex_block = 0
-- u = 0.642 → 映射后 0.321
-- v = 0.469 → 翻转后 0.531
-
-### 面数据导出示例
-原始面记录：`(a=0, b=1, c=2, ..., g=32, h=45, i=78)`
-OBJ输出：`f 33/1/ 46/2/ 79/3/`
-
----
-
-> 注：本规范基于`model_1s_to_obj.py` v1.2版本实现，确保与代码逻辑完全同步
+## 附录：字段定位标识
+| 关键标记 | 十六进制值 | 代码常量 |
+|---------|------------|----------|
+| 文件头   | AA4749028C07 | `FILE_HEADER` |
+| 模块头   | AA4746042A19 | `MODEL_HEADER` |
+| 顶点数据头 | AA27       | `VERTEX_COORDINATES_HEADER` |
