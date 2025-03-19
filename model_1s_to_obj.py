@@ -1,9 +1,12 @@
 import struct
 import logging
 import os
+import shutil
+import sys
+from tkinter import Tk,filedialog
 from datetime import datetime
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 mtl_content = """
 # 定义材质
@@ -29,21 +32,21 @@ class module:
     name: str = ""
     sub_id: int = 0
     sub_name: str = ""
-    matrix: list = None
+    matrix: list = field(default_factory=list)
     vertex_num: int = 0
-    vertex: list = None
+    vertex: list = field(default_factory=list)
     uvs_num: int = 0
-    uvs: list = None
-    base_matrix: list = None
-    base_params_group1: list = None
-    base_params_group2: list = None
+    uvs: list = field(default_factory=list)
+    base_matrix: list = field(default_factory=list)
+    base_params_group1: list = field(default_factory=list)
+    base_params_group2: list = field(default_factory=list)
     bone_id: int = 0
-    normals: list = None
+    normals: list = field(default_factory=list)
     faces_num: int = 0
-    sub_matrix: list = None
-    sub_params_group1: list = None
-    sub_params_group2: list = None
-    faces: list = None
+    sub_matrix: list = field(default_factory=list)
+    sub_params_group1: list = field(default_factory=list)
+    sub_params_group2: list = field(default_factory=list)
+    faces: list = field(default_factory = list)
 
 class Model1SToOBJ:
     # 文件头标识
@@ -51,17 +54,10 @@ class Model1SToOBJ:
     FILE_HEADER =           b'\xaa\x47\x49\x02\x8c\x07'
     BASE_MODEL_HEADER =     b'\xaa\x47\x3c\x03\x07\x0e'
     VERTEX_COORDINATES_HEADER = b'\xaa\x27'
+    module_list = field(default_factory=module)
+
     def __init__(self):
         self.output_dir = ""
-        # 日志配置
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(message)s',
-            handlers=[
-                logging.FileHandler('conversion.log'),
-                logging.StreamHandler()
-            ]
-        )
 
     def _write_obj_header(self, obj_file, module_info):
         """写入OBJ文件头信息"""
@@ -160,7 +156,6 @@ class Model1SToOBJ:
         except Exception as e:
             logging.error(f"生成mtl_file 出错error:{e}")
         return filepath
-
 
     def parse_transform_matrix(self, matrix_data):
         """解析15+6的镜像对称参数结构"""
@@ -365,18 +360,81 @@ class Model1SToOBJ:
         except Exception as e:
             logging.error(f"Error at offset 0x{index:X}: {str(e)}")
             raise
-
+        self.module_list = module_list
         logging.debug(f"\n{'='*40}")
         logging.debug(f"Conversion completed!")
         logging.debug(f"Processed modules: {abs(total_modules)}")
         logging.debug(f"{'='*40}")
+        self.state_print()
+
+    def state_print(self):
+        if(self.module_list == None):
+            logging.info(f"还未收录module")
+        else :
+            for now_module in self.module_list:
+                logging.info(f"module_name: {now_module.name},id: {now_module.id}")
 
 if __name__ == "__main__":
+    # 日志配置
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(message)s',
+        handlers=[
+            logging.FileHandler('conversion.log'),
+            logging.StreamHandler()
+        ]
+    )
+
+    root = Tk()
+    root.withdraw()
+
+
+
+    if len(sys.argv) < 2:
+        source_dir = filedialog.askdirectory(title="选择源目录")
+    else:
+        source_dir = sys.argv[1]
+        print(f"目标目录{source_dir}")
+        source_dir = os.path.abspath(source_dir)
+        print(f"目标目录{source_dir}")
+        if not os.path.exists(source_dir):
+            print(f"目标目录不存在{sys.argv[1]}")
+            sys.exit(1)
+
+    output_name = os.path.basename(source_dir) + "_module"
+    output_path = os.path.join(source_dir, output_name)
+    if not os.path.exists(output_path):
+        os.makedirs(output_path)
+
+
     converter = Model1SToOBJ()
 
-    # 配置输入输出
-    input_file = "model.1s"              # 输入文件路径
-    output_directory = "converted_objs"  # 输出目录
+    file_names = ["0.png", "1.png"]
 
-    # 执行转换
-    converter.convert(input_file, output_directory)
+    file_find = True
+    model_1s_file_path = ""
+
+    for file_name in file_names:
+        file_path = os.path.join(source_dir, file_name)
+        # 检查文件是否存在
+        if os.path.exists(file_path):
+            try:
+                # 移动文件到目标目录
+                shutil.copy(file_path, os.path.join(output_path, file_name))
+                print(f"成功将 {file_name} 复制到 {output_path}")
+            except Exception as e:
+                print(f"复制 {file_name} 时出错: {e}")
+        else:
+            print(f"{file_name} 在 {source_dir} 中未找到。")
+            file_find = False
+
+    file_path = os.path.join(source_dir, "model.1s")
+    if os.path.exists(file_path):
+        logging.info(f"成功找到model.1s文件")
+        model_1s_file_path = file_path
+    else:
+        logging.info(f"未找到model.1s文件")
+        sys.exit(1)
+
+    if(file_find == True) :
+        converter.convert(model_1s_file_path, output_path)
