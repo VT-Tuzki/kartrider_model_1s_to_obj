@@ -220,147 +220,190 @@ class Model1SToOBJ:
             return False
 
 
-    def process_module(self, data, index, is_sub_module=False, back_module = None):
-        if(back_module == None) :
+    def _read_int16(self, data, index):
+        """Read a 16-bit integer from data at given index."""
+        value = int.from_bytes(data[index:index+2], 'little')
+        return value, index + 2
+
+    def _read_int32(self, data, index):
+        """Read a 32-bit integer from data at given index."""
+        value = int.from_bytes(data[index:index+4], 'little')
+        return value, index + 4
+
+    def _read_float(self, data, index):
+        """Read a single precision float from data at given index."""
+        value = struct.unpack_from('<f', data, index)[0]
+        return value, index + 4
+
+    def _read_string(self, data, index):
+        """Read a UTF-16LE string from data at given index."""
+        # First read the string length
+        length, index = self._read_int16(data, index)
+        # Then read the string data (including null terminator)
+        string_data = data[index:index+2+length*2].decode('utf-16le').strip('\x00')
+        return string_data, index + 2 + length*2
+
+    def _read_vertex(self, data, index):
+        """Read a vertex (3 floats) from data."""
+        x, index = self._read_float(data, index)
+        y, index = self._read_float(data, index)
+        z, index = self._read_float(data, index)
+        return (x, y, z), index
+
+    def process_module(self, data, index, is_sub_module=False, back_module=None):
+        """
+        Process a single module from the binary data.
+
+        Args:
+            data: Binary data containing the module
+            index: Current position in the data
+            is_sub_module: Whether this is a submodule
+            back_module: Module object to populate (created if None)
+
+        Returns:
+            Updated index after processing the module
+        """
+        # Initialize module if not provided
+        if back_module is None:
             back_module = module()
-        """处理单个模块"""
+
+        # Skip header
         start_offset = index
         index += len(self.MODEL_HEADER)
 
-        # 解析模块基本信息
-        module_id = int.from_bytes(data[index:index+2], 'little')
-        logging.debug(f"当前模块id: {module_id}")
-        index += 2
-        logging.debug(f"当前index: {index:x}")
-        name_len = int.from_bytes(data[index:index+2], 'little')
-        index += 2
-        module_name = data[index:index+2+name_len*2].decode('utf-16le').strip('\x00')
-        index += 2 + name_len*2
-        logging.debug(f"当前模块名: {module_name}")
-        if(is_sub_module) :
-            back_module.sub_id = module_id
-            back_module.sub_name = module_name
-        else:
-            back_module.id = module_id
-            back_module.name = module_name
-        # 处理子模块标记
-        has_submodule = int.from_bytes(data[index:index+2], 'little')
-        index += 2
+        # Parse module basic information
+        try:
+            # Read module ID
+            module_id, index = self._read_int16(data, index)
+            logging.debug(f"当前模块id: {module_id}")
 
-        if has_submodule:
-            logging.debug(f"Module {module_id} has submodules, entering recursion...")
-            index = self.process_module(data, index+2, True, back_module)
-        else:
-            index += 2  # 跳过未知字段
+            # Read module name
+            module_name, index = self._read_string(data, index)
+            logging.debug(f"当前模块名: {module_name}")
 
-            # 解析变换矩阵
-            matrix_data = data[index:index+84]
-            base_matrix, base_params_group1, base_params_group2 = self.parse_transform_matrix(matrix_data)
-            back_module.base_matrix = base_matrix
-            back_module.base_params_group1 = base_params_group1
-            back_module.base_params_group2 = base_params_group2
-            index += 84
-            index += 50
-            if(data[index:index+2] != self.VERTEX_COORDINATES_HEADER):
-                logging.debug(f"没找到aa27{index:X}")
+            # Assign ID and name based on whether this is a submodule
+            if is_sub_module:
+                back_module.sub_id = module_id
+                back_module.sub_name = module_name
             else:
-                logging.debug(f"当前index 位置: @{index:X}")
+                back_module.id = module_id
+                back_module.name = module_name
+
+            # Check if this module has submodules
+            has_submodule, index = self._read_int16(data, index)
+
+            if has_submodule:
+                logging.debug(f"Module {module_id} has submodules, entering recursion...")
+                # Skip 2 bytes and process the submodule
+                index = self.process_module(data, index+2, True, back_module)
+            else:
+                # Skip 2 unknown bytes
                 index += 2
-                bone_id  = int.from_bytes(data[index:index+2], 'little')
-                logging.debug(f"骨骼ID:{bone_id }")
-                index += 2
-                back_module.bone_id = bone_id
-                vertex_num = int.from_bytes(data[index:index+2], 'little')
-                logging.debug(f"当前顶点个数: {vertex_num}")
-                index += 4
-                # 解析顶点坐标（每个顶点包含x/y/z三个float）
-                vertices = []
-                back_module.vertex_num = vertex_num
-                for _ in range(vertex_num):
-                    if index + 12 > len(data):  # 防止越界
-                        break
-                    x, y, z = struct.unpack_from('<3f', data, index)
-                    vertices.append((x, y, z))
-                    index += 12  # 每个顶点占12字节
-                logging.debug(f"当前index 位置: @{index:X}")
-                back_module.vertex = vertices
-                back_module.vertex_num = vertex_num
-                uv_count = int.from_bytes(data[index:index+4], 'little')
-                index +=4
-                normals = []
-                for _ in range(uv_count):
-                    # 解析3个float（UV + 权重或其他）
-                    nx = struct.unpack_from('<f', data, index)[0]
-                    index +=4
-                    ny = struct.unpack_from('<f', data, index)[0]
-                    index +=4
-                    nz = struct.unpack_from('<f', data, index)[0]
-                    index +=4
-                    normals.append((nx, ny, nz))
-                back_module.normals = normals
-                uvs_num = int.from_bytes(data[index:index+2], 'little')
-                logging.debug(f"第二段数据数值: {uvs_num:X}")
-                index += 4
-                uv = []
-                for num in range(uvs_num):
-                    vertex_id  = int.from_bytes(data[index:index+2], 'little')
-                    index +=2
-                    tex_block  = int.from_bytes(data[index:index+2], 'little')
-                    index +=2
-                    u = struct.unpack_from('<f', data, index)[0]
-                    index +=4
-                    v = struct.unpack_from('<f', data, index)[0]
-                    index +=4
-                    v = 1.0 - v
-                    uv.append((u,v))
 
-                back_module.uvs = uv
-                back_module.uvs_num = uvs_num
-                face_count = int.from_bytes(data[index:index+2], 'little')
-                index +=4
-                logging.debug(f"当前face_count: @{face_count:X}")
-                logging.debug(f"当前index 位置: @{index:X}")
-                faces = []
-                for num in range(face_count):
-                    a = int.from_bytes(data[index:index+2], 'little')
-                    index +=2
-                    b = int.from_bytes(data[index:index+2], 'little')
-                    index +=2
-                    c = int.from_bytes(data[index:index+2], 'little')
-                    index +=2
-                    d = int.from_bytes(data[index:index+2], 'little')
-                    index +=2
-                    e = int.from_bytes(data[index:index+2], 'little')
-                    index +=2
-                    f = int.from_bytes(data[index:index+2], 'little')
-                    index +=2
-                    g = int.from_bytes(data[index:index+2], 'little')
-                    index +=2
-                    h = int.from_bytes(data[index:index+2], 'little')
-                    index +=2
-                    i = int.from_bytes(data[index:index+2], 'little')
-                    index +=2
-                    j = int.from_bytes(data[index:index+2], 'little')
-                    index +=2
-                    material_id = num
-                    faces.append((a, b, c, d, e, f, g, h, i, j, material_id))
-                back_module.faces = faces
-                back_module.faces_num = face_count
-
-                logging.debug(f"当前index 位置: @{index:X}")
-
-            if(is_sub_module):
-                # 解析变换矩阵
+                # Parse transformation matrix (84 bytes)
                 matrix_data = data[index:index+84]
-                sub_matrix, sub_params_group1, sub_params_group2 = self.parse_transform_matrix(matrix_data)
-
-                back_module.sub_matrix = sub_matrix
-                back_module.sub_params_group1 = sub_params_group1
-                back_module.sub_params_group2 = sub_params_group2
-
+                base_matrix, base_params_group1, base_params_group2 = self.parse_transform_matrix(matrix_data)
+                back_module.base_matrix = base_matrix
+                back_module.base_params_group1 = base_params_group1
+                back_module.base_params_group2 = base_params_group2
                 index += 84
-                index += 46
-            logging.debug(f"end当前index 位置: @{index:X}")
+                index += 50  # Skip unknown data
+
+                # Look for vertex coordinate header
+                if data[index:index+2] != self.VERTEX_COORDINATES_HEADER:
+                    logging.debug(f"没找到顶点坐标头标识 (0xAA27) at offset 0x{index:X}")
+                else:
+                    logging.debug(f"找到顶点坐标头标识 at offset 0x{index:X}")
+                    index += 2
+
+                    # Process geometry data
+                    # Read bone ID
+                    bone_id, index = self._read_int16(data, index)
+                    back_module.bone_id = bone_id
+                    logging.debug(f"骨骼ID: {bone_id}")
+
+                    # Read vertex count
+                    vertex_count, index = self._read_int16(data, index)
+                    back_module.vertex_num = vertex_count
+                    logging.debug(f"顶点数量: {vertex_count}")
+                    index += 2  # Skip unknown 2 bytes
+
+                    # Read vertices
+                    vertices = []
+                    for _ in range(vertex_count):
+                        if index + 12 > len(data):  # Prevent out of bounds
+                            logging.warning(f"顶点数据不完整，已到达数据末尾")
+                            break
+                        vertex, index = self._read_vertex(data, index)
+                        vertices.append(vertex)
+                    back_module.vertex = vertices
+
+                    # Read normals
+                    normal_count, index = self._read_int32(data, index)
+                    normals = []
+                    for _ in range(normal_count):
+                        normal, index = self._read_vertex(data, index)
+                        normals.append(normal)
+                    back_module.normals = normals
+
+                    # Read UV coordinates
+                    uv_count, index = self._read_int16(data, index)
+                    logging.debug(f"UV坐标数量: {uv_count}")
+                    index += 2  # Skip unknown 2 bytes
+
+                    uvs = []
+                    for _ in range(uv_count):
+                        # Read vertex and texture block IDs
+                        vertex_id, index = self._read_int16(data, index)
+                        tex_block, index = self._read_int16(data, index)
+
+                        # Read U and V coordinates
+                        u, index = self._read_float(data, index)
+                        v, index = self._read_float(data, index)
+                        v = 1.0 - v  # Flip V coordinate (OpenGL -> DirectX convention)
+
+                        uvs.append((u, v))
+
+                    back_module.uvs = uvs
+                    back_module.uvs_num = uv_count
+
+                    # Read faces
+                    face_count, index = self._read_int16(data, index)
+                    logging.debug(f"面片数量: {face_count}")
+                    index += 2  # Skip unknown 2 bytes
+
+                    faces = []
+                    for face_idx in range(face_count):
+                        # Each face has 10 indices (possibly some are UVs, normals, etc.)
+                        indices = []
+                        for _ in range(10):
+                            idx, index = self._read_int16(data, index)
+                            indices.append(idx)
+
+                        # Use face index as material ID
+                        material_id = face_idx
+                        faces.append(tuple(indices + [material_id]))
+
+                    back_module.faces = faces
+                    back_module.faces_num = face_count
+
+                # For submodules, read additional transformation matrices
+                if is_sub_module:
+                    matrix_data = data[index:index+84]
+                    sub_matrix, sub_params_group1, sub_params_group2 = self.parse_transform_matrix(matrix_data)
+
+                    back_module.sub_matrix = sub_matrix
+                    back_module.sub_params_group1 = sub_params_group1
+                    back_module.sub_params_group2 = sub_params_group2
+
+                    index += 84
+                    index += 46  # Skip unknown data
+
+            logging.debug(f"完成处理模块 {module_name} (ID: {module_id}) at offset 0x{index:X}")
+
+        except Exception as e:
+            logging.error(f"处理模块时出错 at offset 0x{index:X}: {str(e)}")
+            # Continue with current index to prevent infinite loops
 
         return index
 
@@ -427,8 +470,8 @@ class Model1SToOBJ:
             for now_module in self.module_list:
                 logging.info(f"module_name: {now_module.name},id: {now_module.id}")
 
-if __name__ == "__main__":
-    # 日志配置
+def setup_logging():
+    """Configure logging for both file and console output."""
     logging.basicConfig(
         level=logging.INFO,
         format='%(message)s',
@@ -438,62 +481,94 @@ if __name__ == "__main__":
         ]
     )
 
-    root = Tk()
-    root.withdraw()
-
-
-
-    if len(sys.argv) < 2:
+def get_source_directory(args):
+    """Get source directory from command line arguments or file dialog."""
+    if len(args) < 2:
+        root = Tk()
+        root.withdraw()
         source_dir = filedialog.askdirectory(title="选择源目录")
     else:
-        source_dir = sys.argv[1]
-        print(f"目标目录{source_dir}")
+        source_dir = args[1]
+        print(f"目标目录: {source_dir}")
         source_dir = os.path.abspath(source_dir)
-        print(f"目标目录{source_dir}")
         if not os.path.exists(source_dir):
-            print(f"目标目录不存在{sys.argv[1]}")
+            print(f"目标目录不存在: {source_dir}")
             sys.exit(1)
+    return source_dir
 
+def prepare_output_directory(source_dir):
+    """Create output directory based on source directory name."""
     output_name = os.path.basename(source_dir) + "_module"
     output_path = os.path.join(source_dir, output_name)
     if not os.path.exists(output_path):
         os.makedirs(output_path)
+    return output_path
 
-
-    converter = Model1SToOBJ()
-
+def process_texture_files(source_dir, output_path, converter):
+    """Copy and process texture files to output directory."""
     file_names = ["0.png", "1.png"]
-
-    file_find = True
-    model_1s_file_path = ""
+    all_files_found = True
 
     for file_name in file_names:
         file_path = os.path.join(source_dir, file_name)
-        # 检查文件是否存在
         if os.path.exists(file_path):
             try:
                 output_file_path = os.path.join(output_path, file_name)
-                # 对于1.png进行洋红色到透明的转换
+                # Convert magenta to transparent for 1.png
                 if file_name == "1.png":
                     converter.convert_magenta_to_transparent(file_path, output_file_path)
                     print(f"成功将 {file_name} 处理并保存到 {output_path}，洋红色已转换为透明")
                 else:
-                    # 其他文件直接复制
+                    # Just copy other files
                     shutil.copy(file_path, output_file_path)
                     print(f"成功将 {file_name} 复制到 {output_path}")
             except Exception as e:
                 print(f"处理 {file_name} 时出错: {e}")
+                all_files_found = False
         else:
             print(f"{file_name} 在 {source_dir} 中未找到。")
-            file_find = False
+            all_files_found = False
 
+    return all_files_found
+
+def find_model_file(source_dir):
+    """Find and verify the model.1s file exists."""
     file_path = os.path.join(source_dir, "model.1s")
     if os.path.exists(file_path):
         logging.info(f"成功找到model.1s文件")
-        model_1s_file_path = file_path
+        return file_path
     else:
         logging.info(f"未找到model.1s文件")
+        return None
+
+def main():
+    """Main entry point for the application."""
+    setup_logging()
+
+    # Get source directory
+    source_dir = get_source_directory(sys.argv)
+
+    # Prepare output directory
+    output_path = prepare_output_directory(source_dir)
+
+    # Create converter instance
+    converter = Model1SToOBJ()
+
+    # Process texture files
+    textures_ok = process_texture_files(source_dir, output_path, converter)
+
+    # Find and verify model file
+    model_file_path = find_model_file(source_dir)
+    if not model_file_path:
         sys.exit(1)
 
-    if(file_find == True) :
-        converter.convert(model_1s_file_path, output_path)
+    # Convert model if everything is ready
+    if textures_ok:
+        converter.convert(model_file_path, output_path)
+    else:
+        logging.warning("Some texture files were missing or failed to process. Conversion may be incomplete.")
+        # Continue with conversion anyway, as the model structure can still be useful
+        converter.convert(model_file_path, output_path)
+
+if __name__ == "__main__":
+    main()
