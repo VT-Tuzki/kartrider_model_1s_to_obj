@@ -31,6 +31,7 @@ from tkinter import Tk,filedialog
 from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass, field
+from PIL import Image
 
 mtl_content = """
 # 定义材质
@@ -190,6 +191,34 @@ class Model1SToOBJ:
         base_params_group2 = floats[19:22]  # 参数组2
 
         return (base_matrix, base_params_group1, base_params_group2)
+
+    def convert_magenta_to_transparent(self, input_path, output_path):
+        """将图像中的洋红色(255,0,255)转换为透明"""
+        try:
+            # 打开图像并转换为RGBA模式
+            img = Image.open(input_path).convert("RGBA")
+            data = img.getdata()
+
+            # 创建新的像素数据
+            new_data = []
+            for item in data:
+                # 检查是否为洋红色(255,0,255)
+                if item[0] > 250 and item[1] < 5 and item[2] > 250:
+                    # 设置为完全透明
+                    new_data.append((0, 0, 0, 0))
+                else:
+                    # 保持原样
+                    new_data.append(item)
+
+            # 更新图像数据
+            img.putdata(new_data)
+            img.save(output_path, "PNG")
+            logging.info(f"成功将 {input_path} 的洋红色转换为透明")
+            return True
+        except Exception as e:
+            logging.error(f"转换洋红色失败: {e}")
+            return False
+
 
     def process_module(self, data, index, is_sub_module=False, back_module = None):
         if(back_module == None) :
@@ -443,11 +472,17 @@ if __name__ == "__main__":
         # 检查文件是否存在
         if os.path.exists(file_path):
             try:
-                # 移动文件到目标目录
-                shutil.copy(file_path, os.path.join(output_path, file_name))
-                print(f"成功将 {file_name} 复制到 {output_path}")
+                output_file_path = os.path.join(output_path, file_name)
+                # 对于1.png进行洋红色到透明的转换
+                if file_name == "1.png":
+                    converter.convert_magenta_to_transparent(file_path, output_file_path)
+                    print(f"成功将 {file_name} 处理并保存到 {output_path}，洋红色已转换为透明")
+                else:
+                    # 其他文件直接复制
+                    shutil.copy(file_path, output_file_path)
+                    print(f"成功将 {file_name} 复制到 {output_path}")
             except Exception as e:
-                print(f"复制 {file_name} 时出错: {e}")
+                print(f"处理 {file_name} 时出错: {e}")
         else:
             print(f"{file_name} 在 {source_dir} 中未找到。")
             file_find = False
