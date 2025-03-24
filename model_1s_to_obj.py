@@ -471,15 +471,49 @@ class Model1SToOBJ:
                 logging.info(f"module_name: {now_module.name},id: {now_module.id}")
 
 def setup_logging():
-    """Configure logging for both file and console output."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(message)s',
-        handlers=[
-            logging.FileHandler('conversion.log'),
-            logging.StreamHandler()
-        ]
-    )
+    """Configure logging with separate files for debug and info levels."""
+    # Get the directory where the script is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    log_dir = os.path.join(script_dir, 'log')
+
+    # Create log directory if it doesn't exist
+    os.makedirs(log_dir, exist_ok=True)
+
+    # Generate timestamp for log files
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Set up formatter
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+    # Create root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)  # Capture all levels
+
+    # Clear any existing handlers
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+
+    # Create INFO file handler
+    info_file = os.path.join(log_dir, f'info_{timestamp}.log')
+    info_handler = logging.FileHandler(info_file)
+    info_handler.setLevel(logging.INFO)
+    info_handler.setFormatter(formatter)
+    root_logger.addHandler(info_handler)
+
+    # Create DEBUG file handler
+    debug_file = os.path.join(log_dir, f'debug_{timestamp}.log')
+    debug_handler = logging.FileHandler(debug_file)
+    debug_handler.setLevel(logging.DEBUG)
+    debug_handler.setFormatter(formatter)
+    root_logger.addHandler(debug_handler)
+
+    # Create console handler for INFO level
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
+
+    logging.info(f"Logging initialized. INFO log: {info_file}, DEBUG log: {debug_file}")
 
 def get_source_directory(args):
     """Get source directory from command line arguments or file dialog."""
